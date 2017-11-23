@@ -5,6 +5,9 @@ import (
 	"errors"
 	"io"
 	"math"
+	"bytes"
+	"compress/gzip"
+	"encoding/base64"
 )
 
 // --------------
@@ -114,6 +117,30 @@ func (p *MsgParser) Write(conn *TCPConn, args ...[]byte) error {
 		msgLen += uint32(len(args[i]))
 	}
 
+	originMsg := make([]byte, msgLen)
+	l := 0
+	for i := 0; i < len(args); i++ {
+		copy(originMsg[l:], args[i])
+		l += len(args[i])
+	}
+
+	// gzip
+	var zipData bytes.Buffer
+	gz := gzip.NewWriter(&zipData)
+	if _, err := gz.Write(originMsg); err != nil {
+		return errors.New("gzip message error: " + err.Error())
+	}
+	if err := gz.Flush(); err != nil {
+		return errors.New("gzip message error: " + err.Error())
+	}
+	if err := gz.Close(); err != nil {
+		return errors.New("gzip message error: " + err.Error())
+	}
+
+	// base64
+	encodeString := base64.StdEncoding.EncodeToString(zipData.Bytes())
+	msgLen = uint32(len(encodeString))
+
 	// check len
 	if msgLen > p.maxMsgLen {
 		return errors.New("message too long")
@@ -142,11 +169,7 @@ func (p *MsgParser) Write(conn *TCPConn, args ...[]byte) error {
 	}
 
 	// write data
-	l := p.lenMsgLen
-	for i := 0; i < len(args); i++ {
-		copy(msg[l:], args[i])
-		l += len(args[i])
-	}
+	copy(msg[p.lenMsgLen:], encodeString)
 
 	conn.Write(msg)
 
